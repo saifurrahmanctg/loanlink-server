@@ -27,6 +27,53 @@ async function run() {
     const db = client.db("loanlink-db");
     const loansCollection = db.collection("loans");
     const loanApplicationsCollection = db.collection("loanApplications");
+    const usersCollection = db.collection("users");
+
+    // ========================
+    // 📌 USER ROUTES
+    // ========================
+
+    // ➤ Register user (after Firebase signup)
+    app.post("/users", async (req, res) => {
+      try {
+        const { name, email, photo, role, createdAt } = req.body;
+
+        // check existing
+        const exists = await usersCollection.findOne({ email });
+        if (exists) {
+          return res.send({ success: true, message: "User already exists" });
+        }
+
+        const newUser = {
+          name,
+          email,
+          photo,
+          role,
+          createdAt: createdAt || new Date(),
+        };
+
+        const result = await usersCollection.insertOne(newUser);
+
+        res.send({
+          success: true,
+          message: "User saved in MongoDB",
+          id: result.insertedId,
+        });
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
+    // ➤ Fetch single user
+    app.get("/users/:email", async (req, res) => {
+      try {
+        const email = req.params.email;
+        const result = await usersCollection.findOne({ email });
+        res.send(result);
+      } catch {
+        res.status(500).send({ message: "Failed to fetch user" });
+      }
+    });
 
     // ========================
     // 📜 LOANS ROUTES
