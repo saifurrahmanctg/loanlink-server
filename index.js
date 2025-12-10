@@ -31,6 +31,22 @@ async function run() {
     // ========================
     // 📜 LOANS ROUTES
     // ========================
+    // Add a new loan
+    app.post("/loans", async (req, res) => {
+      try {
+        const loan = {
+          ...req.body,
+          createdAt: new Date(),
+        };
+
+        const result = await loansCollection.insertOne(loan);
+        res.send({ success: true, loanId: result.insertedId });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ success: false, message: "Failed to add loan" });
+      }
+    });
+
     // Get all loans
     app.get("/loans", async (req, res) => {
       const result = await loansCollection.find().toArray();
@@ -47,12 +63,13 @@ async function run() {
     // ===========================
     // 📜 LOAN APPLICATION ROUTES
     // ===========================
+
     // Create a loan application
     app.post("/loan-applications", async (req, res) => {
       try {
         const application = req.body;
 
-        // Auto fields
+        // Auto fields (NOT taken from user input)
         application.status = "Pending";
         application.applicationFeeStatus = "Unpaid";
         application.createdAt = new Date();
@@ -69,15 +86,58 @@ async function run() {
       }
     });
 
-    // Get all loan applications
+    // ===========================
+    // Get ALL loan applications + optional filtering
+
+    // ===========================
     app.get("/loan-applications", async (req, res) => {
       try {
+        const status = req.query.status;
+        let filter = {};
+
+        if (status) {
+          filter.status = status;
+        }
+
         const apps = await loanApplicationsCollection
-          .find()
+          .find(filter)
           .sort({ createdAt: -1 })
           .toArray();
 
         res.send(apps);
+      } catch (error) {
+        res.status(500).send({ message: error.message });
+      }
+    });
+
+    // ===========================
+    // Borrower → My Loans
+    // ===========================
+    app.get("/loan-applications/user/:email", async (req, res) => {
+      try {
+        const email = req.params.email;
+        const result = await loanApplicationsCollection
+          .find({ userEmail: email })
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: error.message });
+      }
+    });
+
+    // ===========================
+    // Manager → Pending Loans
+    // ===========================
+    app.get("/loan-applications/status/pending", async (req, res) => {
+      try {
+        const result = await loanApplicationsCollection
+          .find({ status: "Pending" }) // FIXED (capital P)
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        res.send(result);
       } catch (error) {
         res.status(500).send({ message: error.message });
       }
