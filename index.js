@@ -26,7 +26,11 @@ async function run() {
 
     const db = client.db("loanlink-db");
     const loansCollection = db.collection("loans");
+    const loanApplicationsCollection = db.collection("loanApplications");
 
+    // ========================
+    // 📜 LOANS ROUTES
+    // ========================
     // Get all loans
     app.get("/loans", async (req, res) => {
       const result = await loansCollection.find().toArray();
@@ -38,6 +42,45 @@ async function run() {
       const { id } = req.params;
       const loan = await loansCollection.findOne({ _id: new ObjectId(id) });
       res.send(loan);
+    });
+
+    // ===========================
+    // 📜 LOAN APPLICATION ROUTES
+    // ===========================
+    // Create a loan application
+    app.post("/loan-applications", async (req, res) => {
+      try {
+        const application = req.body;
+
+        // Auto fields
+        application.status = "Pending";
+        application.applicationFeeStatus = "Unpaid";
+        application.createdAt = new Date();
+
+        const result = await loanApplicationsCollection.insertOne(application);
+
+        res.send({
+          success: true,
+          message: "Loan application submitted successfully!",
+          id: result.insertedId,
+        });
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
+    // Get all loan applications
+    app.get("/loan-applications", async (req, res) => {
+      try {
+        const apps = await loanApplicationsCollection
+          .find()
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        res.send(apps);
+      } catch (error) {
+        res.status(500).send({ message: error.message });
+      }
     });
 
     await client.db("admin").command({ ping: 1 });
