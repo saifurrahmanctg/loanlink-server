@@ -36,28 +36,24 @@ async function run() {
     // ➤ Register user (after Firebase signup)
     app.post("/users", async (req, res) => {
       try {
-        const { name, email, photo, role, createdAt } = req.body;
+        const user = req.body;
 
-        // check existing
-        const exists = await usersCollection.findOne({ email });
-        if (exists) {
-          return res.send({ success: true, message: "User already exists" });
+        const existing = await usersCollection.findOne({ email: user.email });
+
+        if (existing) {
+          return res.send({
+            success: true,
+            message: "User already exists",
+            user: existing,
+          });
         }
 
-        const newUser = {
-          name,
-          email,
-          photo,
-          role,
-          createdAt: createdAt || new Date(),
-        };
-
-        const result = await usersCollection.insertOne(newUser);
+        const result = await usersCollection.insertOne(user);
 
         res.send({
           success: true,
-          message: "User saved in MongoDB",
-          id: result.insertedId,
+          message: "User created successfully",
+          userId: result.insertedId,
         });
       } catch (error) {
         res.status(500).send({ success: false, message: error.message });
@@ -72,6 +68,22 @@ async function run() {
         res.send(result);
       } catch {
         res.status(500).send({ message: "Failed to fetch user" });
+      }
+    });
+
+    app.patch("/users/role/:email", async (req, res) => {
+      try {
+        const email = req.params.email;
+        const { role } = req.body;
+
+        const result = await usersCollection.updateOne(
+          { email },
+          { $set: { role } }
+        );
+
+        res.send({ success: true });
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
       }
     });
 
