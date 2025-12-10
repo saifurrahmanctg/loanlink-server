@@ -1,6 +1,6 @@
 const express = require("express");
 const cors = require("cors");
-const { MongoClient, ServerApiVersion } = require("mongodb");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 require("dotenv").config({ path: ".env.local" });
 
 const app = express();
@@ -24,7 +24,21 @@ async function run() {
   try {
     await client.connect();
 
-    // Api's
+    const db = client.db("loanlink-db");
+    const loansCollection = db.collection("loans");
+
+    // Get all loans
+    app.get("/loans", async (req, res) => {
+      const result = await loansCollection.find().toArray();
+      res.send(result);
+    });
+
+    // Get a single loan
+    app.get("/loans/:id", async (req, res) => {
+      const { id } = req.params;
+      const loan = await loansCollection.findOne({ _id: new ObjectId(id) });
+      res.send(loan);
+    });
 
     await client.db("admin").command({ ping: 1 });
     console.log(
