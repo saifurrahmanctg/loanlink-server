@@ -33,7 +33,7 @@ async function run() {
     // 📌 USER ROUTES
     // ========================
 
-    // ➤ Register user (after Firebase signup)
+    // Save user data upon registration
     app.post("/users", async (req, res) => {
       try {
         const user = req.body;
@@ -60,7 +60,13 @@ async function run() {
       }
     });
 
-    // ➤ Fetch single user
+    // Get all users
+    app.get("/users", async (req, res) => {
+      const result = await usersCollection.find().toArray();
+      res.send(result);
+    });
+
+    // Get a single user by ID
     app.get("/users/:email", async (req, res) => {
       try {
         const email = req.params.email;
@@ -84,6 +90,36 @@ async function run() {
         res.send({ success: true });
       } catch (error) {
         res.status(500).send({ success: false, message: error.message });
+      }
+    });
+    // Delete a user by ID
+    app.delete("/users/:id/suspend", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const { reason, feedback } = req.body;
+
+        const result = await usersCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
+
+        if (result.deletedCount === 0) {
+          return res.status(404).send({
+            success: false,
+            message: "User not found",
+          });
+        }
+
+        res.send({
+          success: true,
+          message: "User suspended & deleted successfully",
+          reason,
+          feedback,
+        });
+      } catch (error) {
+        res.status(500).send({
+          success: false,
+          message: error.message,
+        });
       }
     });
 
@@ -145,10 +181,7 @@ async function run() {
       }
     });
 
-    // ===========================
     // Get ALL loan applications + optional filtering
-
-    // ===========================
     app.get("/loan-applications", async (req, res) => {
       try {
         const status = req.query.status;
@@ -169,9 +202,7 @@ async function run() {
       }
     });
 
-    // ===========================
     // Borrower → My Loans
-    // ===========================
     app.get("/loan-applications/user/:email", async (req, res) => {
       try {
         const email = req.params.email;
@@ -186,9 +217,7 @@ async function run() {
       }
     });
 
-    // ===========================
     // Manager → Pending Loans
-    // ===========================
     app.get("/loan-applications/status/pending", async (req, res) => {
       try {
         const result = await loanApplicationsCollection
