@@ -155,6 +155,54 @@ async function run() {
       res.send(loan);
     });
 
+    // Update a single loan by ID
+    app.patch("/loans/:id", async (req, res) => {
+      const id = req.params.id;
+      const update = req.body;
+
+      const result = await loansCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: update }
+      );
+
+      res.send({ success: true });
+    });
+
+    // Get a single loan for show home
+    app.patch("/loans/home/:id", async (req, res) => {
+      const id = req.params.id;
+      const { showHome } = req.body;
+
+      const result = await loansCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { showHome } }
+      );
+
+      res.send(result);
+    });
+
+    // Delete a loan
+    app.delete("/loans/:id", async (req, res) => {
+      const id = req.params.id;
+
+      await loansCollection.deleteOne({ _id: new ObjectId(id) });
+
+      res.send({ success: true });
+    });
+
+    // Toggle show loan on home page
+    app.patch("/loans/:id/show", async (req, res) => {
+      const id = req.params.id;
+      const { showOnHome } = req.body;
+
+      await loansCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { showOnHome } }
+      );
+
+      res.send({ success: true });
+    });
+
     // ===========================
     // 📜 LOAN APPLICATION ROUTES
     // ===========================
