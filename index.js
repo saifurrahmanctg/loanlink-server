@@ -190,19 +190,6 @@ async function run() {
       res.send({ success: true });
     });
 
-    // Toggle show loan on home page
-    app.patch("/loans/:id/show", async (req, res) => {
-      const id = req.params.id;
-      const { showOnHome } = req.body;
-
-      await loansCollection.updateOne(
-        { _id: new ObjectId(id) },
-        { $set: { showOnHome } }
-      );
-
-      res.send({ success: true });
-    });
-
     // ===========================
     // 📜 LOAN APPLICATION ROUTES
     // ===========================
@@ -274,6 +261,30 @@ async function run() {
           .toArray();
 
         res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: error.message });
+      }
+    });
+
+    // DELETE a loan application
+    app.delete("/loan-applications/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+
+        const result = await loanApplicationsCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
+
+        if (result.deletedCount === 0) {
+          return res
+            .status(404)
+            .send({ message: "Loan Application not found" });
+        }
+
+        res.send({
+          message: "Loan Application deleted successfully",
+          deletedId: id,
+        });
       } catch (error) {
         res.status(500).send({ message: error.message });
       }
