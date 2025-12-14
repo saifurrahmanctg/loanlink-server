@@ -266,6 +266,23 @@ async function run() {
       }
     });
 
+    // Update loan application by ID
+    app.patch("/loan-applications/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const updateData = req.body;
+
+        const result = await loanApplicationsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: updateData }
+        );
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: error.message });
+      }
+    });
+
     // DELETE a loan application
     app.delete("/loan-applications/:id", async (req, res) => {
       try {
