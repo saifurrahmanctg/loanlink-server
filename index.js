@@ -321,6 +321,162 @@ async function run() {
       }
     });
 
+    // 📌 Dashboard Stats for All Roles
+    app.get("/dashboard/stats/:email", async (req, res) => {
+      try {
+        const email = req.params.email;
+
+        // Fetch user
+        const user = await usersCollection.findOne({ email });
+        if (!user)
+          return res
+            .status(404)
+            .send({ success: false, message: "User not found" });
+
+        let stats = [];
+
+        if (user.role === "admin") {
+          // Admin sees system-wide stats
+          const totalUsers = await usersCollection.countDocuments();
+          const totalLoans = await loansCollection.countDocuments();
+          const pendingApprovals =
+            await loanApplicationsCollection.countDocuments({
+              status: "Pending",
+            });
+          const totalMoney = await loansCollection
+            .aggregate([{ $group: { _id: null, total: { $sum: "$amount" } } }])
+            .toArray();
+          const loansPaid = await loansCollection.countDocuments({
+            status: "paid",
+          });
+
+          stats = [
+            { label: "Total Users", value: totalUsers, color: "bg-info" },
+            { label: "Total Loans", value: totalLoans, color: "bg-success" },
+            {
+              label: "Pending Approvals",
+              value: pendingApprovals,
+              color: "bg-warning",
+            },
+            {
+              label: "Total Money Collected",
+              value: totalMoney[0]?.total || 0,
+              color: "bg-primary",
+              prefix: "৳",
+            },
+            {
+              label: "Loans Paid",
+              value: loansPaid,
+              color: "bg-accent",
+              prefix: "৳",
+            },
+          ];
+        } else if (user.role === "manager") {
+          // Manager sees stats for all loans
+          const totalLoans = await loansCollection.countDocuments();
+          const totalMoney = await loansCollection
+            .aggregate([{ $group: { _id: null, total: { $sum: "$amount" } } }])
+            .toArray();
+          const pendingApprovals =
+            await loanApplicationsCollection.countDocuments({
+              status: "Pending",
+            });
+          const loansPaid = await loansCollection.countDocuments({
+            status: "paid",
+          });
+          const avgLoan = await loansCollection
+            .aggregate([
+              { $group: { _id: null, avgAmount: { $avg: "$amount" } } },
+            ])
+            .toArray();
+
+          stats = [
+            {
+              label: "Total Loans Issued",
+              value: totalLoans,
+              color: "bg-info",
+            },
+            {
+              label: "Total Money Collected",
+              value: totalMoney[0]?.total || 0,
+              color: "bg-success",
+              prefix: "৳",
+            },
+            {
+              label: "Pending Approvals",
+              value: pendingApprovals,
+              color: "bg-warning",
+            },
+            {
+              label: "Loans Paid",
+              value: loansPaid,
+              color: "bg-primary",
+              prefix: "৳",
+            },
+            {
+              label: "Average Loan Amount",
+              value: avgLoan[0]?.avgAmount || 0,
+              color: "bg-accent",
+              prefix: "৳",
+            },
+          ];
+        } else {
+          // Borrower sees only their own loans
+          const userLoans = await loansCollection
+            .find({ userEmail: email })
+            .toArray();
+          const totalLoans = userLoans.length;
+          const totalMoneyReceived = userLoans.reduce(
+            (sum, l) => (l.status === "paid" ? sum + l.amount : sum),
+            0
+          );
+          const pendingLoans = userLoans.filter(
+            (l) => l.status === "Pending"
+          ).length;
+          const loansPaid = userLoans.filter((l) => l.status === "paid").length;
+          const avgLoan =
+            userLoans.reduce((sum, l) => sum + l.amount, 0) /
+            (userLoans.length || 1);
+          const activeEMI = userLoans.filter(
+            (l) => l.status === "active"
+          ).length;
+
+          stats = [
+            { label: "Total Loans Taken", value: totalLoans, color: "bg-info" },
+            {
+              label: "Total Money Received",
+              value: totalMoneyReceived,
+              color: "bg-success",
+              prefix: "৳",
+            },
+            {
+              label: "Pending Loans",
+              value: pendingLoans,
+              color: "bg-warning",
+            },
+            {
+              label: "Total Paid",
+              value: loansPaid,
+              color: "bg-primary",
+              prefix: "৳",
+            },
+            {
+              label: "Average Loan",
+              value: avgLoan,
+              color: "bg-accent",
+              prefix: "৳",
+            },
+            { label: "Active EMI", value: activeEMI, color: "bg-secondary" },
+          ];
+        }
+
+        res.send({ success: true, role: user.role, stats });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
     await client.db("admin").command({ ping: 1 });
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!"
