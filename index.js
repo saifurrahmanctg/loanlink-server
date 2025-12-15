@@ -252,7 +252,7 @@ async function run() {
       }
     });
 
-    // Manager → Pending Loans
+    // Get all PENDING Loan applications
     app.get("/loan-applications/status/pending", async (req, res) => {
       try {
         const result = await loanApplicationsCollection
@@ -276,6 +276,20 @@ async function run() {
           { _id: new ObjectId(id) },
           { $set: updateData }
         );
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: error.message });
+      }
+    });
+
+    // Get all APPROVED Loan applications
+    app.get("/loan-applications/status/approved", async (req, res) => {
+      try {
+        const result = await loanApplicationsCollection
+          .find({ status: "Approved" })
+          .sort({ approvedAt: -1 })
+          .toArray();
 
         res.send(result);
       } catch (error) {
