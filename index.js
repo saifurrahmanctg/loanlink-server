@@ -520,29 +520,33 @@ async function run() {
           ];
         } else {
           // borrower
-          const userLoans = await loansCollection
-            .find({ userEmail: email })
-            .toArray();
+          const [userLoans, payments] = await Promise.all([
+            loansCollection.find({ userEmail: email }).toArray(),
+            paymentsCollection
+              .find({ userEmail: email, status: "paid" })
+              .toArray(),
+          ]);
+
           const total = userLoans.length;
-          const received = userLoans
-            .filter((l) => l.status === "paid")
-            .reduce((s, l) => s + l.amount, 0);
+          const received = payments.reduce((s, p) => s + p.amount, 0);
           const pending = userLoans.filter(
             (l) => l.status === "Pending"
           ).length;
-          const paid = userLoans.filter((l) => l.status === "paid").length;
+          const closed = userLoans.filter((l) => l.status === "paid").length;
           const avg = total
             ? userLoans.reduce((s, l) => s + l.amount, 0) / total
             : 0;
-          const active = userLoans.filter((l) => l.status === "active").length;
+          const activeEMI = userLoans.filter(
+            (l) => l.status === "active"
+          ).length;
 
           stats = [
             { label: "Total Loans Taken", value: total },
             { label: "Total Money Received", value: received },
             { label: "Pending Loans", value: pending },
-            { label: "Total Paid", value: paid },
+            { label: "Loans Closed", value: closed },
             { label: "Average Loan", value: avg },
-            { label: "Active EMI", value: active },
+            { label: "Active EMI", value: activeEMI },
           ];
         }
 
@@ -554,9 +558,9 @@ async function run() {
     });
 
     // await client.db("admin").command({ ping: 1 });
-    console.log(
-      "Pinged your deployment. You successfully connected to MongoDB!"
-    );
+    // console.log(
+    // //   "Pinged your deployment. You successfully connected to MongoDB!"
+    // );
   } finally {
     // await client.close();
   }
@@ -564,7 +568,7 @@ async function run() {
 run().catch(console.dir);
 
 app.get("/", (req, res) => {
-  res.send(`LoanLink Server is running on port ${port} `);
+  res.send("🚀 LoanLink Server is Running");
 });
 
 app.listen(port, () => {
