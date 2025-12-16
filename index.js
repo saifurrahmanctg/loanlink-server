@@ -1,7 +1,8 @@
 const express = require("express");
 const cors = require("cors");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
-require("dotenv").config({ path: ".env.local" });
+require("dotenv").config({ path: ".env" });
+const stripe = require("stripe")(process.env.STRIPE_SECRET);
 
 const app = express();
 const port = 3000;
@@ -11,7 +12,6 @@ app.use(express.json());
 
 const uri = process.env.MONGODB_URI;
 
-// Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -28,6 +28,7 @@ async function run() {
     const loansCollection = db.collection("loans");
     const loanApplicationsCollection = db.collection("loanApplications");
     const usersCollection = db.collection("users");
+    const paymentsCollection = db.collection("payments");
 
     // ========================
     // 📌 USER ROUTES
@@ -191,7 +192,7 @@ async function run() {
     });
 
     // ===========================
-    // 📜 LOAN APPLICATION ROUTES
+    //  LOAN APPLICATION ROUTES
     // ===========================
 
     // Create a loan application
@@ -297,6 +298,23 @@ async function run() {
       }
     });
 
+    // Cancel a loan application
+    app.patch("/loan-applications/cancel/:id", async (req, res) => {
+      const { id } = req.params;
+
+      const result = await loanApplicationsCollection.updateOne(
+        { _id: new ObjectId(req.params.id) },
+        {
+          $set: {
+            status: "Cancelled",
+            cancelledAt: new Date(),
+          },
+        }
+      );
+
+      res.send({ success: result.modifiedCount > 0 });
+    });
+
     // DELETE a loan application
     app.delete("/loan-applications/:id", async (req, res) => {
       try {
@@ -321,163 +339,221 @@ async function run() {
       }
     });
 
+    // ===========================
+    //     STRIPE PAYMENT API'S
+    // ===========================
+
+    app.post("/payments/create-checkout-session", async (req, res) => {
+      const { loanApplicationId, email } = req.body;
+
+      const session = await stripe.checkout.sessions.create({
+        payment_method_types: ["card"],
+        mode: "payment",
+        line_items: [
+          {
+            price_data: {
+              currency: "usd",
+              product_data: { name: "Loan Application Fee" },
+              unit_amount: 1000, // $10
+            },
+            quantity: 1,
+          },
+        ],
+
+        metadata: {
+          loanApplicationId,
+          email,
+        },
+
+        success_url: `${process.env.CLIENT_URL}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${process.env.CLIENT_URL}/dashboard/my-loans`,
+      });
+
+      res.send({ url: session.url });
+    });
+
+    // POST /payments/success
+    app.post("/payments/success", async (req, res) => {
+      try {
+        const { loanApplicationId, transactionId, email } = req.body;
+
+        // Save payment
+        await paymentsCollection.insertOne({
+          loanApplicationId,
+          transactionId,
+          email,
+          amount: 10,
+          paidAt: new Date(),
+        });
+
+        // Update loan application
+        await loanApplicationsCollection.updateOne(
+          { _id: new ObjectId(loanApplicationId) },
+          {
+            $set: {
+              applicationFeeStatus: "Paid",
+              payment: {
+                transactionId,
+                email,
+                amount: 10,
+                paidAt: new Date(),
+              },
+            },
+          }
+        );
+
+        res.send({ success: true });
+      } catch (error) {
+        res.status(500).send({ message: error.message });
+      }
+    });
+
+    // GET /payments/:loanId
+    app.get("/payments/:loanId", async (req, res) => {
+      const payment = await paymentsCollection.findOne({
+        loanApplicationId: req.params.loanId,
+      });
+
+      res.send(payment);
+    });
+
+    app.post("/payments/confirm", async (req, res) => {
+      try {
+        const { sessionId } = req.body;
+
+        const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+        if (session.payment_status !== "paid") {
+          return res.status(400).send({ message: "Payment not completed" });
+        }
+
+        const loanApplicationId = session.metadata.loanApplicationId;
+        const email = session.metadata.email;
+
+        // Save payment
+        await paymentsCollection.insertOne({
+          loanApplicationId,
+          email,
+          transactionId: session.payment_intent,
+          amount: 10,
+          paidAt: new Date(),
+        });
+
+        // Update loan application
+        await loanApplicationsCollection.updateOne(
+          { _id: new ObjectId(loanApplicationId) },
+          {
+            $set: {
+              applicationFeeStatus: "Paid",
+              payment: {
+                email,
+                transactionId: session.payment_intent,
+                amount: 10,
+                paidAt: new Date(),
+              },
+            },
+          }
+        );
+
+        res.send({ success: true });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: error.message });
+      }
+    });
+
     // 📌 Dashboard Stats for All Roles
     app.get("/dashboard/stats/:email", async (req, res) => {
       try {
         const email = req.params.email;
 
-        // Fetch user
         const user = await usersCollection.findOne({ email });
         if (!user)
           return res
             .status(404)
-            .send({ success: false, message: "User not found" });
+            .json({ success: false, message: "User not found" });
 
         let stats = [];
 
         if (user.role === "admin") {
-          // Admin sees system-wide stats
-          const totalUsers = await usersCollection.countDocuments();
-          const totalLoans = await loansCollection.countDocuments();
-          const pendingApprovals =
-            await loanApplicationsCollection.countDocuments({
-              status: "Pending",
-            });
-          const totalMoney = await loansCollection
-            .aggregate([{ $group: { _id: null, total: { $sum: "$amount" } } }])
-            .toArray();
-          const loansPaid = await loansCollection.countDocuments({
-            status: "paid",
-          });
-
+          const [totalUsers, totalLoans, pending, moneyAgg, paid] =
+            await Promise.all([
+              usersCollection.countDocuments(),
+              loansCollection.countDocuments(),
+              loanApplicationsCollection.countDocuments({ status: "Pending" }),
+              loansCollection
+                .aggregate([
+                  { $group: { _id: null, total: { $sum: "$amount" } } },
+                ])
+                .toArray(),
+              loanApplicationsCollection.countDocuments({ status: "paid" }),
+            ]);
           stats = [
-            { label: "Total Users", value: totalUsers, color: "bg-info" },
-            { label: "Total Loans", value: totalLoans, color: "bg-success" },
-            {
-              label: "Pending Approvals",
-              value: pendingApprovals,
-              color: "bg-warning",
-            },
-            {
-              label: "Total Money Collected",
-              value: totalMoney[0]?.total || 0,
-              color: "bg-primary",
-              prefix: "৳",
-            },
-            {
-              label: "Loans Paid",
-              value: loansPaid,
-              color: "bg-accent",
-              prefix: "৳",
-            },
+            { label: "Total Users", value: totalUsers },
+            { label: "Total Loans", value: totalLoans },
+            { label: "Pending Approvals", value: pending },
+            { label: "Total Money Collected", value: moneyAgg[0]?.total || 0 },
+            { label: "Loans Paid", value: paid },
           ];
         } else if (user.role === "manager") {
-          // Manager sees stats for all loans
-          const totalLoans = await loansCollection.countDocuments();
-          const totalMoney = await loansCollection
-            .aggregate([{ $group: { _id: null, total: { $sum: "$amount" } } }])
-            .toArray();
-          const pendingApprovals =
-            await loanApplicationsCollection.countDocuments({
-              status: "Pending",
-            });
-          const loansPaid = await loansCollection.countDocuments({
-            status: "paid",
-          });
-          const avgLoan = await loansCollection
-            .aggregate([
-              { $group: { _id: null, avgAmount: { $avg: "$amount" } } },
-            ])
-            .toArray();
-
+          const [total, money, pending, paid, avg] = await Promise.all([
+            loanApplicationsCollection.countDocuments(),
+            loansCollection
+              .aggregate([
+                { $group: { _id: null, total: { $sum: "$amount" } } },
+              ])
+              .toArray(),
+            loanApplicationsCollection.countDocuments({ status: "Pending" }),
+            loanApplicationsCollection.countDocuments({ status: "paid" }),
+            loansCollection
+              .aggregate([
+                { $group: { _id: null, avgAmount: { $avg: "$amount" } } },
+              ])
+              .toArray(),
+          ]);
           stats = [
-            {
-              label: "Total Loans Issued",
-              value: totalLoans,
-              color: "bg-info",
-            },
-            {
-              label: "Total Money Collected",
-              value: totalMoney[0]?.total || 0,
-              color: "bg-success",
-              prefix: "৳",
-            },
-            {
-              label: "Pending Approvals",
-              value: pendingApprovals,
-              color: "bg-warning",
-            },
-            {
-              label: "Loans Paid",
-              value: loansPaid,
-              color: "bg-primary",
-              prefix: "৳",
-            },
-            {
-              label: "Average Loan Amount",
-              value: avgLoan[0]?.avgAmount || 0,
-              color: "bg-accent",
-              prefix: "৳",
-            },
+            { label: "Total Loans Issued", value: total },
+            { label: "Total Money Collected", value: money[0]?.total || 0 },
+            { label: "Pending Approvals", value: pending },
+            { label: "Loans Paid", value: paid },
+            { label: "Average Loan Amount", value: avg[0]?.avgAmount || 0 },
           ];
         } else {
-          // Borrower sees only their own loans
+          // borrower
           const userLoans = await loansCollection
             .find({ userEmail: email })
             .toArray();
-          const totalLoans = userLoans.length;
-          const totalMoneyReceived = userLoans.reduce(
-            (sum, l) => (l.status === "paid" ? sum + l.amount : sum),
-            0
-          );
-          const pendingLoans = userLoans.filter(
+          const total = userLoans.length;
+          const received = userLoans
+            .filter((l) => l.status === "paid")
+            .reduce((s, l) => s + l.amount, 0);
+          const pending = userLoans.filter(
             (l) => l.status === "Pending"
           ).length;
-          const loansPaid = userLoans.filter((l) => l.status === "paid").length;
-          const avgLoan =
-            userLoans.reduce((sum, l) => sum + l.amount, 0) /
-            (userLoans.length || 1);
-          const activeEMI = userLoans.filter(
-            (l) => l.status === "active"
-          ).length;
+          const paid = userLoans.filter((l) => l.status === "paid").length;
+          const avg = total
+            ? userLoans.reduce((s, l) => s + l.amount, 0) / total
+            : 0;
+          const active = userLoans.filter((l) => l.status === "active").length;
 
           stats = [
-            { label: "Total Loans Taken", value: totalLoans, color: "bg-info" },
-            {
-              label: "Total Money Received",
-              value: totalMoneyReceived,
-              color: "bg-success",
-              prefix: "৳",
-            },
-            {
-              label: "Pending Loans",
-              value: pendingLoans,
-              color: "bg-warning",
-            },
-            {
-              label: "Total Paid",
-              value: loansPaid,
-              color: "bg-primary",
-              prefix: "৳",
-            },
-            {
-              label: "Average Loan",
-              value: avgLoan,
-              color: "bg-accent",
-              prefix: "৳",
-            },
-            { label: "Active EMI", value: activeEMI, color: "bg-secondary" },
+            { label: "Total Loans Taken", value: total },
+            { label: "Total Money Received", value: received },
+            { label: "Pending Loans", value: pending },
+            { label: "Total Paid", value: paid },
+            { label: "Average Loan", value: avg },
+            { label: "Active EMI", value: active },
           ];
         }
 
-        res.send({ success: true, role: user.role, stats });
-      } catch (error) {
-        console.error(error);
-        res.status(500).send({ success: false, message: error.message });
+        res.json({ success: true, role: user.role, stats });
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ success: false, message: err.message });
       }
     });
 
-    await client.db("admin").command({ ping: 1 });
+    // await client.db("admin").command({ ping: 1 });
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!"
     );
