@@ -22,7 +22,7 @@ const client = new MongoClient(uri, {
 
 async function run() {
   try {
-    // await client.connect();
+    await client.connect();
 
     const db = client.db("loanlink-db");
     const loansCollection = db.collection("loans");
@@ -93,6 +93,22 @@ async function run() {
         res.status(500).send({ success: false, message: error.message });
       }
     });
+
+    // Update user data
+    app.patch("/users/update/:email", async (req, res) => {
+      try {
+        const email = req.params.email;
+        const updateData = req.body;
+        const result = await usersCollection.updateOne(
+          { email },
+          { $set: updateData }
+        );
+        res.send({ success: true, modifiedCount: result.modifiedCount });
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
     // Delete a user by ID
     app.delete("/users/:id/suspend", async (req, res) => {
       try {
@@ -462,105 +478,181 @@ async function run() {
       }
     });
 
-    // 📌 Dashboard Stats for All Roles
+
+    // 📊 DASHBOARD STATS (ADMIN | MANAGER | BORROWER)
     app.get("/dashboard/stats/:email", async (req, res) => {
       try {
         const email = req.params.email;
 
         const user = await usersCollection.findOne({ email });
-        if (!user)
+        if (!user) {
           return res
             .status(404)
             .json({ success: false, message: "User not found" });
+        }
 
         let stats = [];
 
+        // =========================
+        // 👑 ADMIN STATS
+        // =========================
         if (user.role === "admin") {
-          const [totalUsers, totalLoans, pending, moneyAgg, paid] =
-            await Promise.all([
-              usersCollection.countDocuments(),
-              loansCollection.countDocuments(),
-              loanApplicationsCollection.countDocuments({ status: "Pending" }),
-              loansCollection
-                .aggregate([
-                  { $group: { _id: null, total: { $sum: "$amount" } } },
-                ])
-                .toArray(),
-              loanApplicationsCollection.countDocuments({ status: "paid" }),
-            ]);
-          stats = [
-            { label: "Total Users", value: totalUsers },
-            { label: "Total Loans", value: totalLoans },
-            { label: "Pending Approvals", value: pending },
-            { label: "Total Money Collected", value: moneyAgg[0]?.total || 0 },
-            { label: "Loans Paid", value: paid },
-          ];
-        } else if (user.role === "manager") {
-          const [total, money, pending, paid, avg] = await Promise.all([
+          const [
+            totalUsers,
+            totalActiveLoans,
+            totalApplications,
+            pendingApplications,
+            approvedApplications,
+            loanAmountAgg,
+          ] = await Promise.all([
+            usersCollection.countDocuments(),
+            loansCollection.countDocuments({ status: "Active" }),
             loanApplicationsCollection.countDocuments(),
-            loansCollection
-              .aggregate([
-                { $group: { _id: null, total: { $sum: "$amount" } } },
-              ])
-              .toArray(),
             loanApplicationsCollection.countDocuments({ status: "Pending" }),
-            loanApplicationsCollection.countDocuments({ status: "paid" }),
+            loanApplicationsCollection.countDocuments({ status: "Approved" }),
             loansCollection
               .aggregate([
-                { $group: { _id: null, avgAmount: { $avg: "$amount" } } },
+                { $match: { status: "Active" } },
+                {
+                  $group: {
+                    _id: null,
+                    total: { $sum: { $toDouble: "$amount" } },
+                  },
+                },
               ])
               .toArray(),
           ]);
-          stats = [
-            { label: "Total Loans Issued", value: total },
-            { label: "Total Money Collected", value: money[0]?.total || 0 },
-            { label: "Pending Approvals", value: pending },
-            { label: "Loans Paid", value: paid },
-            { label: "Average Loan Amount", value: avg[0]?.avgAmount || 0 },
-          ];
-        } else {
-          // borrower
-          const [userLoans, payments] = await Promise.all([
-            loansCollection.find({ userEmail: email }).toArray(),
-            paymentsCollection
-              .find({ userEmail: email, status: "paid" })
-              .toArray(),
-          ]);
-
-          const total = userLoans.length;
-          const received = payments.reduce((s, p) => s + p.amount, 0);
-          const pending = userLoans.filter(
-            (l) => l.status === "Pending"
-          ).length;
-          const closed = userLoans.filter((l) => l.status === "paid").length;
-          const avg = total
-            ? userLoans.reduce((s, l) => s + l.amount, 0) / total
-            : 0;
-          const activeEMI = userLoans.filter(
-            (l) => l.status === "active"
-          ).length;
 
           stats = [
-            { label: "Total Loans Taken", value: total },
-            { label: "Total Money Received", value: received },
-            { label: "Pending Loans", value: pending },
-            { label: "Loans Closed", value: closed },
-            { label: "Average Loan", value: avg },
-            { label: "Active EMI", value: activeEMI },
+            { label: "Total Registered Users", value: totalUsers },
+            { label: "Total Active Loans", value: totalActiveLoans },
+            { label: "Total Loan Applications", value: totalApplications },
+            { label: "Pending Loan Applications", value: pendingApplications },
+            { label: "Approved Loan Applications", value: approvedApplications },
+            { label: "Total Loan Amount", value: loanAmountAgg[0]?.total || 0 },
           ];
         }
 
-        res.json({ success: true, role: user.role, stats });
-      } catch (err) {
-        console.error(err);
-        res.status(500).json({ success: false, message: err.message });
+        // =========================
+        // 🧑‍💼 MANAGER STATS
+        // =========================
+        else if (user.role === "manager") {
+          const [
+            myActiveLoans,
+            totalApplications,
+            pendingApplications,
+            approvedApplications,
+            loanAmountAgg,
+            feeAgg,
+          ] = await Promise.all([
+            loansCollection.countDocuments({ createdBy: email, status: "Active" }),
+            loanApplicationsCollection.countDocuments(),
+            loanApplicationsCollection.countDocuments({ status: "Pending" }),
+            loanApplicationsCollection.countDocuments({ status: "Approved" }),
+            loansCollection
+              .aggregate([
+                { $match: { createdBy: email, status: "Active" } },
+                {
+                  $group: {
+                    _id: null,
+                    total: { $sum: { $toDouble: "$amount" } },
+                  },
+                },
+              ])
+              .toArray(),
+            paymentsCollection
+              .aggregate([
+                { $match: { email } },
+                { $group: { _id: null, total: { $sum: "$amount" } } },
+              ])
+              .toArray(),
+          ]);
+
+          stats = [
+            { label: "My Active Loans", value: myActiveLoans },
+            { label: "Total Loan Applications", value: totalApplications },
+            { label: "Pending Loan Applications", value: pendingApplications },
+            { label: "Approved Loan Applications", value: approvedApplications },
+            { label: "Total Loan Amount", value: loanAmountAgg[0]?.total || 0 },
+            { label: "Total Fees Collected", value: feeAgg[0]?.total || 0 },
+          ];
+        }
+
+        // =========================
+        // 👤 BORROWER STATS
+        // =========================
+        else {
+          const [
+            myApplications,
+            pendingApplications,
+            approvedApplications,
+            rejectedApplications,
+            loanAmountAgg,
+            feeAgg,
+          ] = await Promise.all([
+            loanApplicationsCollection.countDocuments({ userEmail: email }),
+            loanApplicationsCollection.countDocuments({
+              userEmail: email,
+              status: "Pending",
+            }),
+            loanApplicationsCollection.countDocuments({
+              userEmail: email,
+              status: "Approved",
+            }),
+            loanApplicationsCollection.countDocuments({
+              userEmail: email,
+              status: { $in: ["Rejected", "Cancelled"] },
+            }),
+            loanApplicationsCollection
+              .aggregate([
+                { $match: { userEmail: email, status: "Approved" } },
+                {
+                  $group: {
+                    _id: null,
+                    total: { $sum: { $toDouble: "$loanAmount" } },
+                  },
+                },
+              ])
+              .toArray(),
+            paymentsCollection
+              .aggregate([
+                { $match: { email: email } },
+                { $group: { _id: null, total: { $sum: "$amount" } } },
+              ])
+              .toArray(),
+          ]);
+
+          stats = [
+            { label: "My Loan Applications", value: myApplications },
+            { label: "Pending Applications", value: pendingApplications },
+            { label: "Approved Applications", value: approvedApplications },
+            {
+              label: "Rejected / Cancelled Applications",
+              value: rejectedApplications,
+            },
+            { label: "Total Loan Amount", value: loanAmountAgg[0]?.total || 0 },
+            { label: "Total Fees Paid", value: feeAgg[0]?.total || 0 },
+          ];
+        }
+
+        res.json({
+          success: true,
+          role: user.role,
+          stats,
+          generatedAt: new Date(),
+        });
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({ success: false, message: error.message });
       }
     });
 
-    // await client.db("admin").command({ ping: 1 });
-    // console.log(
-    // //   "Pinged your deployment. You successfully connected to MongoDB!"
-    // );
+
+
+    await client.db("admin").command({ ping: 1 });
+    console.log(
+      "Pinged your deployment. You successfully connected to MongoDB!"
+    );
   } finally {
     // await client.close();
   }
