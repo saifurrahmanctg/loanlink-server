@@ -3,6 +3,13 @@ const cors = require("cors");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 require("dotenv").config({ path: ".env" });
 const stripe = require("stripe")(process.env.STRIPE_SECRET);
+const admin = require("firebase-admin");
+
+// Initialize Firebase Admin SDK
+const serviceAccount = require("./loanlink-firebase-adminsdk.json");
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount)
+});
 
 const app = express();
 const port = 3000;
@@ -11,7 +18,6 @@ app.use(cors());
 app.use(express.json());
 
 const uri = process.env.MONGODB_URI;
-
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -20,190 +26,153 @@ const client = new MongoClient(uri, {
   },
 });
 
+// ========================
+// 🔐 MIDDLEWARE
+// ========================
+
+// Verify Token Middleware
+const verifyToken = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).send({ message: "Unauthorized access" });
+  }
+
+  const token = authHeader.split(" ")[1];
+  try {
+    const decodedToken = await admin.auth().verifyIdToken(token);
+    req.decodedUser = decodedToken;
+    next();
+  } catch (error) {
+    console.error("Token verification error:", error);
+    return res.status(401).send({ message: "Unauthorized access" });
+  }
+};
+
 async function run() {
   try {
-    // await client.connect();
-
     const db = client.db("loanlink-db");
     const loansCollection = db.collection("loans");
     const loanApplicationsCollection = db.collection("loanApplications");
     const usersCollection = db.collection("users");
     const paymentsCollection = db.collection("payments");
 
+    console.log("✅ Successfully connected to MongoDB!");
+
     // ========================
     // 📌 USER ROUTES
     // ========================
 
-    // Save user data upon registration
     app.post("/users", async (req, res) => {
       try {
         const user = req.body;
-
         const existing = await usersCollection.findOne({ email: user.email });
 
         if (existing) {
-          return res.send({
-            success: true,
-            message: "User already exists",
-            user: existing,
-          });
+          return res.send({ success: true, message: "User already exists", user: existing });
         }
 
         const result = await usersCollection.insertOne(user);
-
-        res.send({
-          success: true,
-          message: "User created successfully",
-          userId: result.insertedId,
-        });
+        res.send({ success: true, message: "User created successfully", userId: result.insertedId });
       } catch (error) {
         res.status(500).send({ success: false, message: error.message });
       }
     });
 
-    // Get all users
-    app.get("/users", async (req, res) => {
+    app.get("/users", verifyToken, async (req, res) => {
       const result = await usersCollection.find().toArray();
       res.send(result);
     });
 
-    // Get a single user by ID
-    app.get("/users/:email", async (req, res) => {
+    app.get("/users/:email", verifyToken, async (req, res) => {
       try {
         const email = req.params.email;
         const result = await usersCollection.findOne({ email });
         res.send(result);
-      } catch {
+      } catch (error) {
         res.status(500).send({ message: "Failed to fetch user" });
       }
     });
 
-    app.patch("/users/role/:email", async (req, res) => {
+    app.patch("/users/role/:email", verifyToken, async (req, res) => {
       try {
         const email = req.params.email;
         const { role } = req.body;
-
-        const result = await usersCollection.updateOne(
-          { email },
-          { $set: { role } }
-        );
-
+        const result = await usersCollection.updateOne({ email }, { $set: { role } });
         res.send({ success: true });
       } catch (error) {
         res.status(500).send({ success: false, message: error.message });
       }
     });
 
-    // Update user data
-    app.patch("/users/update/:email", async (req, res) => {
+    app.patch("/users/update/:email", verifyToken, async (req, res) => {
       try {
         const email = req.params.email;
         const updateData = req.body;
-        const result = await usersCollection.updateOne(
-          { email },
-          { $set: updateData }
-        );
+        const result = await usersCollection.updateOne({ email }, { $set: updateData });
         res.send({ success: true, modifiedCount: result.modifiedCount });
       } catch (error) {
         res.status(500).send({ success: false, message: error.message });
       }
     });
 
-    // Delete a user by ID
-    app.delete("/users/:id/suspend", async (req, res) => {
+    app.delete("/users/:id/suspend", verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
         const { reason, feedback } = req.body;
-
-        const result = await usersCollection.deleteOne({
-          _id: new ObjectId(id),
-        });
+        const result = await usersCollection.deleteOne({ _id: new ObjectId(id) });
 
         if (result.deletedCount === 0) {
-          return res.status(404).send({
-            success: false,
-            message: "User not found",
-          });
+          return res.status(404).send({ success: false, message: "User not found" });
         }
 
-        res.send({
-          success: true,
-          message: "User suspended & deleted successfully",
-          reason,
-          feedback,
-        });
+        res.send({ success: true, message: "User suspended & deleted successfully", reason, feedback });
       } catch (error) {
-        res.status(500).send({
-          success: false,
-          message: error.message,
-        });
+        res.status(500).send({ success: false, message: error.message });
       }
     });
 
     // ========================
     // 📜 LOANS ROUTES
     // ========================
-    // Add a new loan
-    app.post("/loans", async (req, res) => {
-      try {
-        const loan = {
-          ...req.body,
-          createdAt: new Date(),
-        };
 
+    app.post("/loans", verifyToken, async (req, res) => {
+      try {
+        const loan = { ...req.body, createdAt: new Date() };
         const result = await loansCollection.insertOne(loan);
         res.send({ success: true, loanId: result.insertedId });
       } catch (error) {
-        console.error(error);
         res.status(500).send({ success: false, message: "Failed to add loan" });
       }
     });
 
-    // Get all loans
     app.get("/loans", async (req, res) => {
       const result = await loansCollection.find().toArray();
       res.send(result);
     });
 
-    // Get a single loan
     app.get("/loans/:id", async (req, res) => {
       const { id } = req.params;
       const loan = await loansCollection.findOne({ _id: new ObjectId(id) });
       res.send(loan);
     });
 
-    // Update a single loan by ID
-    app.patch("/loans/:id", async (req, res) => {
+    app.patch("/loans/:id", verifyToken, async (req, res) => {
       const id = req.params.id;
       const update = req.body;
-
-      const result = await loansCollection.updateOne(
-        { _id: new ObjectId(id) },
-        { $set: update }
-      );
-
+      const result = await loansCollection.updateOne({ _id: new ObjectId(id) }, { $set: update });
       res.send({ success: true });
     });
 
-    // Get a single loan for show home
-    app.patch("/loans/home/:id", async (req, res) => {
+    app.patch("/loans/home/:id", verifyToken, async (req, res) => {
       const id = req.params.id;
       const { showHome } = req.body;
-
-      const result = await loansCollection.updateOne(
-        { _id: new ObjectId(id) },
-        { $set: { showHome } }
-      );
-
+      const result = await loansCollection.updateOne({ _id: new ObjectId(id) }, { $set: { showHome } });
       res.send(result);
     });
 
-    // Delete a loan
-    app.delete("/loans/:id", async (req, res) => {
+    app.delete("/loans/:id", verifyToken, async (req, res) => {
       const id = req.params.id;
-
       await loansCollection.deleteOne({ _id: new ObjectId(id) });
-
       res.send({ success: true });
     });
 
@@ -211,145 +180,89 @@ async function run() {
     //  LOAN APPLICATION ROUTES
     // ===========================
 
-    // Create a loan application
-    app.post("/loan-applications", async (req, res) => {
+    app.post("/loan-applications", verifyToken, async (req, res) => {
       try {
         const application = req.body;
-
-        // Auto fields (NOT taken from user input)
         application.status = "Pending";
         application.applicationFeeStatus = "Unpaid";
         application.createdAt = new Date();
 
         const result = await loanApplicationsCollection.insertOne(application);
-
-        res.send({
-          success: true,
-          message: "Loan application submitted successfully!",
-          id: result.insertedId,
-        });
+        res.send({ success: true, message: "Loan application submitted successfully!", id: result.insertedId });
       } catch (error) {
         res.status(500).send({ success: false, message: error.message });
       }
     });
 
-    // Get ALL loan applications + optional filtering
-    app.get("/loan-applications", async (req, res) => {
+    app.get("/loan-applications", verifyToken, async (req, res) => {
       try {
         const status = req.query.status;
         let filter = {};
+        if (status) filter.status = status;
 
-        if (status) {
-          filter.status = status;
-        }
-
-        const apps = await loanApplicationsCollection
-          .find(filter)
-          .sort({ createdAt: -1 })
-          .toArray();
-
+        const apps = await loanApplicationsCollection.find(filter).sort({ createdAt: -1 }).toArray();
         res.send(apps);
       } catch (error) {
         res.status(500).send({ message: error.message });
       }
     });
 
-    // Borrower → My Loans
-    app.get("/loan-applications/user/:email", async (req, res) => {
+    app.get("/loan-applications/user/:email", verifyToken, async (req, res) => {
       try {
         const email = req.params.email;
-        const result = await loanApplicationsCollection
-          .find({ userEmail: email })
-          .sort({ createdAt: -1 })
-          .toArray();
-
+        const result = await loanApplicationsCollection.find({ userEmail: email }).sort({ createdAt: -1 }).toArray();
         res.send(result);
       } catch (error) {
         res.status(500).send({ message: error.message });
       }
     });
 
-    // Get all PENDING Loan applications
-    app.get("/loan-applications/status/pending", async (req, res) => {
+    app.get("/loan-applications/status/pending", verifyToken, async (req, res) => {
       try {
-        const result = await loanApplicationsCollection
-          .find({ status: "Pending" }) // FIXED (capital P)
-          .sort({ createdAt: -1 })
-          .toArray();
-
+        const result = await loanApplicationsCollection.find({ status: "Pending" }).sort({ createdAt: -1 }).toArray();
         res.send(result);
       } catch (error) {
         res.status(500).send({ message: error.message });
       }
     });
 
-    // Update loan application by ID
-    app.patch("/loan-applications/:id", async (req, res) => {
+    app.patch("/loan-applications/:id", verifyToken, async (req, res) => {
       try {
         const { id } = req.params;
         const updateData = req.body;
-
-        const result = await loanApplicationsCollection.updateOne(
-          { _id: new ObjectId(id) },
-          { $set: updateData }
-        );
-
-        res.send(result);
+        await loanApplicationsCollection.updateOne({ _id: new ObjectId(id) }, { $set: updateData });
+        res.send({ success: true });
       } catch (error) {
         res.status(500).send({ message: error.message });
       }
     });
 
-    // Get all APPROVED Loan applications
-    app.get("/loan-applications/status/approved", async (req, res) => {
+    app.get("/loan-applications/status/approved", verifyToken, async (req, res) => {
       try {
-        const result = await loanApplicationsCollection
-          .find({ status: "Approved" })
-          .sort({ approvedAt: -1 })
-          .toArray();
-
+        const result = await loanApplicationsCollection.find({ status: "Approved" }).sort({ approvedAt: -1 }).toArray();
         res.send(result);
       } catch (error) {
         res.status(500).send({ message: error.message });
       }
     });
 
-    // Cancel a loan application
-    app.patch("/loan-applications/cancel/:id", async (req, res) => {
+    app.patch("/loan-applications/cancel/:id", verifyToken, async (req, res) => {
       const { id } = req.params;
-
       const result = await loanApplicationsCollection.updateOne(
-        { _id: new ObjectId(req.params.id) },
-        {
-          $set: {
-            status: "Cancelled",
-            cancelledAt: new Date(),
-          },
-        }
+        { _id: new ObjectId(id) },
+        { $set: { status: "Cancelled", cancelledAt: new Date() } }
       );
-
       res.send({ success: result.modifiedCount > 0 });
     });
 
-    // DELETE a loan application
-    app.delete("/loan-applications/:id", async (req, res) => {
+    app.delete("/loan-applications/:id", verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
-
-        const result = await loanApplicationsCollection.deleteOne({
-          _id: new ObjectId(id),
-        });
-
+        const result = await loanApplicationsCollection.deleteOne({ _id: new ObjectId(id) });
         if (result.deletedCount === 0) {
-          return res
-            .status(404)
-            .send({ message: "Loan Application not found" });
+          return res.status(404).send({ message: "Loan Application not found" });
         }
-
-        res.send({
-          message: "Loan Application deleted successfully",
-          deletedId: id,
-        });
+        res.send({ message: "Loan Application deleted successfully", deletedId: id });
       } catch (error) {
         res.status(500).send({ message: error.message });
       }
@@ -359,84 +272,48 @@ async function run() {
     //     STRIPE PAYMENT API'S
     // ===========================
 
-    app.post("/payments/create-checkout-session", async (req, res) => {
-      const { loanApplicationId, email } = req.body;
-
-      const session = await stripe.checkout.sessions.create({
-        payment_method_types: ["card"],
-        mode: "payment",
-        line_items: [
-          {
-            price_data: {
-              currency: "usd",
-              product_data: { name: "Loan Application Fee" },
-              unit_amount: 1000, // $10
-            },
+    app.post("/payments/create-checkout-session", verifyToken, async (req, res) => {
+      try {
+        const { loanApplicationId, email } = req.body;
+        const session = await stripe.checkout.sessions.create({
+          payment_method_types: ["card"],
+          mode: "payment",
+          line_items: [{
+            price_data: { currency: "usd", product_data: { name: "Loan Application Fee" }, unit_amount: 1000 },
             quantity: 1,
-          },
-        ],
-
-        metadata: {
-          loanApplicationId,
-          email,
-        },
-
-        success_url: `${process.env.CLIENT_URL}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${process.env.CLIENT_URL}/dashboard/my-loans`,
-      });
-
-      res.send({ url: session.url });
+          }],
+          metadata: { loanApplicationId, email },
+          success_url: `${process.env.CLIENT_URL}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+          cancel_url: `${process.env.CLIENT_URL}/dashboard/my-loans`,
+        });
+        res.send({ url: session.url });
+      } catch (error) {
+        res.status(500).send({ message: error.message });
+      }
     });
 
-    // POST /payments/success
-    app.post("/payments/success", async (req, res) => {
+    app.post("/payments/success", verifyToken, async (req, res) => {
       try {
         const { loanApplicationId, transactionId, email } = req.body;
-
-        // Save payment
-        await paymentsCollection.insertOne({
-          loanApplicationId,
-          transactionId,
-          email,
-          amount: 10,
-          paidAt: new Date(),
-        });
-
-        // Update loan application
+        await paymentsCollection.insertOne({ loanApplicationId, transactionId, email, amount: 10, paidAt: new Date() });
         await loanApplicationsCollection.updateOne(
           { _id: new ObjectId(loanApplicationId) },
-          {
-            $set: {
-              applicationFeeStatus: "Paid",
-              payment: {
-                transactionId,
-                email,
-                amount: 10,
-                paidAt: new Date(),
-              },
-            },
-          }
+          { $set: { applicationFeeStatus: "Paid", payment: { transactionId, email, amount: 10, paidAt: new Date() } } }
         );
-
         res.send({ success: true });
       } catch (error) {
         res.status(500).send({ message: error.message });
       }
     });
 
-    // GET /payments/:loanId
-    app.get("/payments/:loanId", async (req, res) => {
-      const payment = await paymentsCollection.findOne({
-        loanApplicationId: req.params.loanId,
-      });
-
+    app.get("/payments/:loanId", verifyToken, async (req, res) => {
+      const payment = await paymentsCollection.findOne({ loanApplicationId: req.params.loanId });
       res.send(payment);
     });
 
-    app.post("/payments/confirm", async (req, res) => {
+    app.post("/payments/confirm", verifyToken, async (req, res) => {
       try {
         const { sessionId } = req.body;
-
         const session = await stripe.checkout.sessions.retrieve(sessionId);
 
         if (session.payment_status !== "paid") {
@@ -446,47 +323,28 @@ async function run() {
         const loanApplicationId = session.metadata.loanApplicationId;
         const email = session.metadata.email;
 
-        // Save payment
-        await paymentsCollection.insertOne({
-          loanApplicationId,
-          email,
-          transactionId: session.payment_intent,
-          amount: 10,
-          paidAt: new Date(),
-        });
-
-        // Update loan application
+        await paymentsCollection.insertOne({ loanApplicationId, email, transactionId: session.payment_intent, amount: 10, paidAt: new Date() });
         await loanApplicationsCollection.updateOne(
           { _id: new ObjectId(loanApplicationId) },
-          {
-            $set: {
-              applicationFeeStatus: "Paid",
-              payment: {
-                email,
-                transactionId: session.payment_intent,
-                amount: 10,
-                paidAt: new Date(),
-              },
-            },
-          }
+          { $set: { applicationFeeStatus: "Paid", payment: { email, transactionId: session.payment_intent, amount: 10, paidAt: new Date() } } }
         );
-
         res.send({ success: true });
       } catch (error) {
-        console.error(error);
         res.status(500).send({ message: error.message });
       }
     });
 
-    // await client.db("admin").command({ ping: 1 });
-    // console.log(
-    //   "Pinged your deployment. You successfully connected to MongoDB!"
-    // );
-  } finally {
-    // await client.close();
+  } catch (error) {
+    console.error("Run error:", error);
   }
 }
-run().catch(console.dir);
+run();
+
+// Global Error Handler
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).send({ success: false, message: "Something went wrong!" });
+});
 
 app.get("/", (req, res) => {
   res.send("🚀 LoanLink Server is Running");
