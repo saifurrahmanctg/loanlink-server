@@ -499,24 +499,24 @@ async function run() {
         if (user.role === "admin") {
           const [
             totalUsers,
+            totalManagers,
+            totalBorrowers,
             totalActiveLoans,
             totalApplications,
-            pendingApplications,
-            approvedApplications,
             loanAmountAgg,
           ] = await Promise.all([
             usersCollection.countDocuments(),
+            usersCollection.countDocuments({ role: "manager" }),
+            usersCollection.countDocuments({ role: "borrower" }),
             loansCollection.countDocuments({ status: "Active" }),
             loanApplicationsCollection.countDocuments(),
-            loanApplicationsCollection.countDocuments({ status: "Pending" }),
-            loanApplicationsCollection.countDocuments({ status: "Approved" }),
-            loansCollection
+            loanApplicationsCollection
               .aggregate([
-                { $match: { status: "Active" } },
+                { $match: { status: "Approved" } },
                 {
                   $group: {
                     _id: null,
-                    total: { $sum: { $toDouble: "$amount" } },
+                    total: { $sum: { $toDouble: "$loanAmount" } },
                   },
                 },
               ])
@@ -524,11 +524,11 @@ async function run() {
           ]);
 
           stats = [
-            { label: "Total Registered Users", value: totalUsers },
+            { label: "Total Users", value: totalUsers },
+            { label: "Total Managers", value: totalManagers },
+            { label: "Total Borrowers", value: totalBorrowers },
             { label: "Total Active Loans", value: totalActiveLoans },
             { label: "Total Loan Applications", value: totalApplications },
-            { label: "Pending Loan Applications", value: pendingApplications },
-            { label: "Approved Loan Applications", value: approvedApplications },
             { label: "Total Loan Amount", value: loanAmountAgg[0]?.total || 0 },
           ];
         }
