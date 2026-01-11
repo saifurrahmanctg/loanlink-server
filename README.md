@@ -1,80 +1,83 @@
----
----
-
-# 📕 Backend – `README.md`
-
-````md
 # 🚀 LoanLink Backend API
 
-RESTful backend API for the **LoanLink Micro-Loan Management System**, built with **Node.js**, **Express**, and **MongoDB**, providing secure and scalable services for loan management.
+A high-performance RESTful API for the **LoanLink Micro-Loan Management System**. Built with **Node.js**, **Express**, and **MongoDB**, this server handles secure role-based data aggregation and comprehensive financial reporting.
 
 ---
 
 ## 🧰 Tech Stack
 
-- **Node.js**
-- **Express.js**
-- **MongoDB**
-- **MongoDB Atlas**
-- **dotenv**
-- **CORS**
+- **Runtime**: Node.js
+- **Framework**: Express.js
+- **Database**: MongoDB Atlas
+- **Security**: CORS, Dotenv
+- **Utilities**: MongoDB Aggregation Pipelines
 
 ---
 
-## 📦 Database Collections
+## 🔐 Advanced Role Integration
 
-```text
-users
-loans
-loanApplications
-```
-````
-
-## 🔐 User Roles
-
-- Admin
-- Manager
-- Borrower
-
-Roles are stored in the users collection and used for authorization on the frontend.
+The API serves three distinct user tiers, providing role-specific data payloads:
+- **Admin**: Global platform statistics and user demographic oversight.
+- **Manager**: Targeted loan product performance and application workflows.
+- **Borrower**: Personalized financial summaries and status tracking.
 
 ---
 
-## 🛣️ API Routes
+## 📊 Dashboard Intelligence
 
-## 👤 User Routes
-
-| Method | Endpoint             | Description         |
-| ------ | -------------------- | ------------------- |
-| POST   | `/users`             | Create user         |
-| GET    | `/users`             | Get all users       |
-| GET    | `/users/:email`      | Get user by email   |
-| PATCH  | `/users/role/:email` | Update user role    |
-| DELETE | `/users/:id/suspend` | Delete/Suspend user |
+The server features a complex aggregation endpoint that dynamically calculates platform health:
+- **Financial Disbursement**: Sums `loanAmount` from approved applications.
+- **User Demographics**: Real-time counts of Admins, Managers, and Borrowers.
+- **Application Flow**: Global tracking of Pending vs. Approved loan statuses.
 
 ---
 
-## 💳 Loan Routes
+## 🛣️ API Endpoints
 
-| Method | Endpoint          | Description    |
-| ------ | ----------------- | -------------- |
-| POST   | `/loans`          | Add new loan   |
-| GET    | `/loans`          | Get all loans  |
-| GET    | `/loans/:id`      | Get loan by ID |
-| PATCH  | `/loans/:id`      | Update loan    |
-| PATCH  | `/loans/home/:id` | Show on home   |
-| DELETE | `/loans/:id`      | Delete loan    |
+### 📊 Statistical Reporting
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/dashboard/stats/:email` | Dynamic role-based platform stats |
+
+### 👤 User Management
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/users` | Create/Sync user |
+| GET | `/users` | Retrieve all users |
+| GET | `/users/:email` | Fetch specific user profile |
+| PATCH | `/users/role/:email` | Role elevation/reduction |
+| DELETE | `/users/:id/suspend` | Account suspension |
+
+### 💳 Loan Products
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/loans` | Create new loan product |
+| GET | `/loans` | List all available loans |
+| GET | `/loans/:id` | Detailed product view |
+| PATCH | `/loans/:id` | Update product terms |
+| PATCH | `/loans/home/:id` | Toggle homepage visibility |
+| DELETE | `/loans/:id` | Product decommissioning |
+
+### 📄 Loan Applications
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/loan-applications` | Submit new application |
+| GET | `/loan-applications` | Global application history |
+| GET | `/loan-applications/user/:email` | User-specific application history |
+| GET | `/loan-applications/status/pending` | Triage pending reviews |
+| GET | `/loan-applications/status/approved` | Track disbursed capital |
+| PATCH | `/loan-applications/:id` | Approve/Reject workflow |
+| DELETE | `/loan-applications/:id` | Purge application records |
 
 ---
 
-## 📄 Loan Application Routes
+## ⚙️ Local Configuration
 
-| Method | Endpoint                             | Description          |
-| ------ | ------------------------------------ | -------------------- |
-| POST   | `/loan-applications`                 | Apply for loan       |
-| GET    | `/loan-applications`                 | Get all applications |
-| GET    | `/loan-applications/user/:email`     | Borrower’s loans     |
-| GET    | `/loan-applications/status/pending`  | Pending loans        |
-| GET    | `/loan-applications/status/approved` | Approved loans       |
-| PATCH  | `/loan-applications/:id`             | Update status        |
-| DELETE | `/loan-applications/:id`             | Delete application   |
+1. Install dependencies: `npm install`
+2. Environment Setup (`.env`):
+   ```bash
+   DB_USER=your_user
+   DB_PASS=your_pass
+   PORT=3000
+   ```
+3. Boot Server: `npm start`
